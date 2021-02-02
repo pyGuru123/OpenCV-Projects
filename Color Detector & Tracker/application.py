@@ -2,10 +2,11 @@ import os
 import tkinter as tk
 import tkinter.ttk as ttk
 from tkinter import filedialog
+from tkinter import messagebox
 from functools import partial
 
 from detector import from_rgb, ColorDetector, get_color_name
-from tracker import ColorTracker
+from tracker import ImageColorTracker, RealtimeColorTracker
 
 cwd = os.getcwd()
 
@@ -15,15 +16,19 @@ class Application(tk.Frame):
 		self.master = master
 		self.grid()
 
-		self.features = ['Detect Color', 'Track Color from Image', 'Track Color in Realtime']
+		self.features = ['Detect Color', 'Track objects from Image', 'Track objects in Realtime']
 		self.current_feature = None
 		self.btn_list = []
 		self.render_id = None
+		self.camera_id = tk.IntVar()
+		self.camera_id.set(0)
+		self.server_id = tk.StringVar()
+		self.connection_option = tk.IntVar()
+		self.path = None
 
 		self.draw_frames()
 		self.draw_buttons()
-#E8175D
-#363636
+
 	def draw_frames(self):
 		self.topbar = tk.Frame(self, width=700, height=49, bg='#363636')
 		self.imgFrame = tk.Frame(self, width=450, height=400, bg='white')
@@ -53,6 +58,10 @@ class Application(tk.Frame):
 		self.set_selection(self.btn_list[0], self.features[0])
 
 	def set_selection(self, widget, text):
+		if self.render_id:
+			self.imgFrame.after_cancel(self.render_id)
+			self.render_id = None
+
 		for w in self.imgFrame.winfo_children():
 			w.destroy()
 
@@ -83,17 +92,15 @@ class Application(tk.Frame):
 			self.selection_frame(text)
 
 		elif text == self.features[2]:
-			self.create_trackbar()
+			self.selection_frame(text)
 
 		self.current_feature = text
+		if self.path:
+			self.connection_option.set(0)
+			self.path = None
+
 
 	def selection_frame(self, feature):
-		if self.render_id:
-			self.imgFrame.after_cancel(self.render_id)
-			self.render_id = None
-		for widget in self.rightbar.winfo_children():
-			widget.destroy()
-
 		if feature == self.features[0]:
 			select_btn = tk.Button(self.rightbar, text='Select File', width=10,
 						relief=tk.RAISED, bg='dodgerblue3', fg='white',
@@ -111,6 +118,21 @@ class Application(tk.Frame):
 						command=self.start_tracking, state=tk.DISABLED)
 			self.track_btn.grid(row=1, column=0, padx=80, pady=20)
 
+		elif feature == self.features[2]:
+			self.camera_label = ttk.Label(self.rightbar, text='Set PC Camera (default 0)', width=25)
+			self.camera_entry = ttk.Entry(self.rightbar, textvariable=self.camera_id, width=22)
+
+			self.server_label = ttk.Label(self.rightbar, text='Enter Server IP', width=25)
+			self.server_entry = ttk.Entry(self.rightbar, textvariable=self.server_id, width=22)
+
+			options = {'Use PC Camera':1, 'Connect with Andriod':2}
+			r = 0
+			for text, value in options.items():
+				ttk.Radiobutton(self.rightbar, text=text, variable=self.connection_option,
+						value=value, command=self.show_option, width=25).grid(row=r, column=0, padx=10, pady=2)
+				r += 1
+
+
 	def select_file(self):
 		self.filepath = filedialog.askopenfilename(initialdir = cwd)
 		if self.filepath:
@@ -124,14 +146,12 @@ class Application(tk.Frame):
 			elif self.current_feature == self.features[1]:
 				for w in self.bottomBox.winfo_children():
 					w.destroy()
-				self.TDObj = ColorTracker(self.filepath)
+				self.TDObj = ImageColorTracker(self.filepath)
 				self.image = self.TDObj.display_original_image((250, 200))
 				self.imglabel = tk.Label(self.bottomBox, image=self.image)
 				self.imglabel.grid(row=0, column=0)
 
 				self.im = self.TDObj.display_original_image((450, 400))
-				# self.canvas.create_image(0,0,  anchor=tk.NW, image=self.im)    
-				# self.canvas.image = self.im 
 				self.canvas.destroy()
 				self.tracked_img = tk.Label(self.imgFrame, image=self.im)
 				self.tracked_img.grid(row=0, column=0)
@@ -152,13 +172,6 @@ class Application(tk.Frame):
 			else:
 				fg = 'black'
 			self.color_label.config(fg=fg, text=cname)
-
-	def start_tracking(self):
-		for w in self.rightbar.winfo_children():
-			w.destroy()
-
-		self.create_trackbar()
-		self.update()
 
 	def create_trackbar(self):
 		self.lh_value = tk.IntVar()
@@ -192,12 +205,22 @@ class Application(tk.Frame):
 			lbl = tk.Label(self.rightbar, text=text, width=30, anchor='w')
 			lbl.grid(row=2*index, column=0, columnspan=2)
 
-		self.render_id = self.imgFrame.after(100, self.track_color)
+		if self.current_feature == self.features[1]:
+			self.render_id = self.imgFrame.after(100, self.track_color)
+		elif self.current_feature == self.features[2]:
+			print(self.path)
+
+	def start_tracking(self):
+		for w in self.rightbar.winfo_children():
+			w.destroy()
+
+		self.create_trackbar()
+		self.update()		
 
 	def print_val(self, event=None):
-		# for slider in self.slider_arr:
-		# 	print(slider.get(), end=' ')
-		# print()
+		for slider in self.slider_arr:
+			print(slider.get(), end=' ')
+		print()
 		pass
 
 	def track_color(self):
@@ -205,19 +228,83 @@ class Application(tk.Frame):
 			arr1 = [item.get() for item in self.slider_arr[:3]]
 			arr2 = [item.get() for item in self.slider_arr[3:]]
 
-			self.im = self.TDObj.detect_from_hsv(arr1, arr2)
-			self.tracked_img['image'] = self.im
-			self.update()
-			# print('updated')
-			self.render_id = self.imgFrame.after(100, self.track_color)
-		# pass
+			self.im = self.TDObj.detect_from_image(arr1, arr2)
+			try:
+				self.tracked_img['image'] = self.im
+				self.update()
+				self.render_id = self.imgFrame.after(100, self.track_color)
+			except:
+				print(self.path)
 
+	def show_option(self):
+		val = self.connection_option.get()
+		if val == 1:
+			self.server_label.grid_forget()
+			self.server_entry.grid_forget()
+			self.camera_label.grid(row=3, column=0, padx=10, pady=10)
+			self.camera_entry.grid(row=4, column=0)
+		elif val == 2:
+			self.camera_label.grid_forget()
+			self.camera_entry.grid_forget()
+			self.server_label.grid(row=3, column=0, padx=10, pady=10)
+			self.server_entry.grid(row=4, column=0)
 
+		self.track_btn = tk.Button(self.rightbar, text='Track Color', width=10,
+						relief=tk.RAISED, bg='dodgerblue3', fg='white',
+						command=self.check_tracking)
+		self.track_btn.grid(row=5, column=0, pady=20)
+
+		self.imglabel = tk.Label(self.bottomBox)
+		self.imglabel.grid(row=0, column=0)
+
+		# self.canvas.destroy()
+		self.tracked_img = tk.Label(self.imgFrame, bg='#afeeee')
+		self.tracked_img.grid(row=0, column=0)
+		self.update()
+
+	def check_tracking(self):
+		val = self.connection_option.get()
+		dct = {1:self.camera_id, 2:self.server_id}
+		self.path = dct.get(val, None)
+		if self.path:
+			self.path = self.path.get()
+			self.track_btn.destroy()
+			self.start_tracking()
+			if val == 2:
+				self.path = str(self.path) + '/shot.jpg'
+			self.RTColorTracker = RealtimeColorTracker(self.path)
+			self.track_color_from_stream()
+		else:
+			messagebox.showinfo('CoDAT', 'Enter the required value')
+
+	def track_color_from_stream(self):
+		val = self.connection_option.get()
+		arr1 = [item.get() for item in self.slider_arr[:3]]
+		arr2 = [item.get() for item in self.slider_arr[3:]]
+
+		if val == 1:
+			self.img = self.RTColorTracker.get_from_camera(arr1, arr2)
+		else:
+			self.img = self.RTColorTracker.get_from_stream(arr1, arr2)
+
+		if len(self.img) == 2:
+			orig, detected = self.img
+			self.imglabel['image'] = orig
+			self.tracked_img['image'] = detected
+			self.imglabel.after(100, self.track_color_from_stream)
+		elif self.img == "Cannot open camera":
+			messagebox.showinfo('CoDAT', 'cannot initialize system camera')
+			self.connection_option.set(0)
+			self.set_selection(self.topbar.winfo_children()[2], self.features[2])
+		elif self.img == "Cannot connect to stream":
+			messagebox.showinfo('CoDAT', 'Cannot connect to stream. Check your network')
+			self.connection_option.set(0)
+			self.set_selection(self.topbar.winfo_children()[2], self.features[2])
 
 if __name__ == '__main__':
 	root = tk.Tk()
 	root.geometry('700x450+350+130')
-	root.title('Color Detector & Tracker')
+	root.title('CoDAT')
 
 	app = Application(master=root)
 	app.mainloop()
